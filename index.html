@@ -31,9 +31,10 @@
             display: flex;
             height: 100vh;
             overflow: hidden;
+            position: relative;
         }
 
-        /* 左侧导航栏 */
+        /* 侧边栏及过渡动画 */
         .sidebar {
             width: 260px;
             background: #090d16;
@@ -43,6 +44,17 @@
             flex-direction: column;
             gap: 16px;
             flex-shrink: 0;
+            transition: all 0.3s cubic-bezier(0.4, 0, 0.2, 1);
+            z-index: 100;
+        }
+        /* 桌面端折叠 */
+        .sidebar.collapsed {
+            width: 0 !important;
+            padding-left: 0 !important;
+            padding-right: 0 !important;
+            border: none !important;
+            opacity: 0;
+            overflow: hidden;
         }
         .sidebar h2 {
             font-size: 1.2rem;
@@ -93,8 +105,47 @@
             color: #64748b;
         }
 
-        /* 主内容区 */
-        .main-content { flex: 1; padding: 32px 40px; overflow-y: auto; }
+        /* 主内容区及顶部菜单栏 */
+        .main-content {
+            flex: 1;
+            padding: 24px 40px;
+            overflow-y: auto;
+            display: flex;
+            flex-direction: column;
+        }
+
+        .top-bar {
+            display: flex;
+            align-items: center;
+            margin-bottom: 20px;
+        }
+        .menu-toggle {
+            background: transparent;
+            border: none;
+            color: var(--text-main);
+            font-size: 1.6rem;
+            cursor: pointer;
+            margin-right: 15px;
+            border-radius: 6px;
+            padding: 4px 10px;
+            transition: 0.2s;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+        }
+        .menu-toggle:hover { background: var(--card-bg); }
+
+        /* 移动端遮罩层 */
+        .sidebar-overlay {
+            display: none;
+            position: fixed;
+            top: 0; left: 0; right: 0; bottom: 0;
+            background: rgba(0,0,0,0.5);
+            z-index: 90;
+            backdrop-filter: blur(2px);
+        }
+        .sidebar-overlay.show { display: block; }
+
         .section { display: none; }
         .section.active { display: block; }
 
@@ -325,12 +376,58 @@
             transition: 0.2s;
         }
         .send-btn:hover { background: var(--primary-light); }
+
+        /* ============== 手机端响应式适配 ============== */
+        @media (max-width: 768px) {
+            .main-content {
+                padding: 16px 16px;
+            }
+            /* 侧边栏变为抽屉式菜单 */
+            .sidebar {
+                position: fixed;
+                height: 100vh;
+                left: -280px; /* 默认藏在屏幕左侧外 */
+            }
+            .sidebar.mobile-open {
+                left: 0;
+            }
+            .sidebar-overlay.show {
+                display: block;
+            }
+            /* 卡片网格单列 */
+            .card-grid {
+                grid-template-columns: 1fr;
+            }
+            /* AI聊天框适配小屏幕 */
+            .ai-chat-window {
+                width: calc(100% - 32px);
+                right: 16px;
+                bottom: 90px;
+                height: 60vh;
+            }
+            .ai-fab {
+                bottom: 20px;
+                right: 20px;
+                width: 50px;
+                height: 50px;
+                font-size: 22px;
+            }
+            /* 阅读器适配 */
+            #reader .reader-content {
+                font-size: 0.95rem;
+                line-height: 1.85;
+                max-width: 100%;
+            }
+        }
     </style>
 </head>
 <body>
 
+    <!-- 移动端侧边栏弹出时的遮罩层 -->
+    <div class="sidebar-overlay" id="sidebarOverlay" onclick="toggleSidebar()"></div>
+
     <!-- 侧边栏 -->
-    <div class="sidebar">
+    <div class="sidebar" id="sidebar">
         <h2 id="novel-title">小说名称</h2>
         <div class="subtitle">轻量全文检索 Wiki</div>
 
@@ -349,6 +446,11 @@
 
     <!-- 主体区域 -->
     <div class="main-content">
+        <!-- 顶部汉堡按钮 -->
+        <div class="top-bar">
+            <button class="menu-toggle" onclick="toggleSidebar()" title="展开/收起目录">☰</button>
+        </div>
+
         <div id="world" class="section active">
             <h2>世界观与设定</h2>
             <p class="section-desc">神法、魔法、国家、组织……构建这个世界的所有核心设定。</p>
@@ -399,11 +501,16 @@
         // =========================================
 
         // 如果知识库/原文文件加载失败，提供默认空数据，防止页面卡死
-        // 用内部变量名避免与外部脚本的 const 声明冲突
-        var _data = typeof novelData !== 'undefined' ? novelData : {
-            title: "数据加载失败", world: [], characters: [], chapters: []
+        // 用内部变量名避免与外部脚本的 const 声明冲突；Array.isArray 强化类型检查
+        var rawData = typeof novelData !== 'undefined' ? novelData : {};
+        var _data = {
+            title: rawData.title || "数据加载失败",
+            world: Array.isArray(rawData.world) ? rawData.world : [],
+            characters: Array.isArray(rawData.characters) ? rawData.characters : [],
+            chapters: Array.isArray(rawData.chapters) ? rawData.chapters : []
         };
-        var _texts = typeof novelTexts !== 'undefined' ? novelTexts : [];
+        var rawTexts = typeof novelTexts !== 'undefined' ? novelTexts : [];
+        var _texts = Array.isArray(rawTexts) ? rawTexts : [];
 
         document.getElementById('novel-title').innerText = _data.title;
 
@@ -471,6 +578,22 @@
         renderCharCards(_data.characters, 'char-cards');
         renderChapterCards(_data.chapters, 'chapter-cards');
 
+        // =========================================
+        // 侧边栏交互控制（桌面折叠 / 手机抽屉）
+        // =========================================
+        function toggleSidebar() {
+            const sidebar = document.getElementById('sidebar');
+            const overlay = document.getElementById('sidebarOverlay');
+            if (window.innerWidth <= 768) {
+                // 手机端：抽屉式滑出/收起
+                sidebar.classList.toggle('mobile-open');
+                overlay.classList.toggle('show');
+            } else {
+                // 桌面端：折叠/展开
+                sidebar.classList.toggle('collapsed');
+            }
+        }
+
         // 标签切换
         function switchTab(tabId, event) {
             document.querySelectorAll('.section').forEach(el => el.classList.remove('active'));
@@ -485,6 +608,11 @@
                 if (map[tabId] !== undefined && items[map[tabId]]) {
                     items[map[tabId]].classList.add('active');
                 }
+            }
+            // 手机端：点击菜单项后自动收起侧边栏
+            if (window.innerWidth <= 768) {
+                document.getElementById('sidebar').classList.remove('mobile-open');
+                document.getElementById('sidebarOverlay').classList.remove('show');
             }
         }
 
@@ -527,7 +655,7 @@
 
         // 中文单字切分器：将字符串拆成单字数组，使 FlexSearch 支持中文检索
         const customEncode = function(str) {
-            return str ? str.toLowerCase().split('') : [];
+            return typeof str === 'string' ? str.toLowerCase().split('') : [];
         };
 
         // 知识库索引
@@ -693,6 +821,12 @@
 
             // 高亮闪烁匹配到的卡片
             highlightMatchedCards(results);
+
+            // 手机端：搜索后自动收起侧边栏，方便看结果
+            if (window.innerWidth <= 768) {
+                document.getElementById('sidebar').classList.remove('mobile-open');
+                document.getElementById('sidebarOverlay').classList.remove('show');
+            }
 
             // 同时在聊天窗口中显示详细结果
             showSearchResults(query, results);
